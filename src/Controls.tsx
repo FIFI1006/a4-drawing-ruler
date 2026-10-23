@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 export function NumberField({
   label,
@@ -21,11 +21,13 @@ export function NumberField({
 }) {
   const [draft, setDraft] = useState(String(Number(value.toFixed(3))));
   const [invalid, setInvalid] = useState(false);
+  const cancelCommit = useRef(false);
   useEffect(() => {
     setDraft(String(Number(value.toFixed(3))));
     setInvalid(false);
   }, [value]);
   const commit = () => {
+    if (cancelCommit.current) {cancelCommit.current = false;return;}
     const v = Number(draft);
     if (draft.trim() !== "" && Number.isFinite(v) && v >= min && v <= max) {
       if (v !== value) onChange(v);
@@ -55,6 +57,7 @@ export function NumberField({
           onKeyDown={(e) => {
             if (e.key === "Enter") e.currentTarget.blur();
             if (e.key === "Escape") {
+                cancelCommit.current = true;
               setDraft(String(Number(value.toFixed(3))));
               e.currentTarget.blur();
             }

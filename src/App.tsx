@@ -934,7 +934,7 @@ function App() {
                           <NumberField
                             label="图片宽度"
                             value={image.width}
-                            min={0.1}
+                            min={Math.max(0.1, 0.1 * image.width / image.height)}
                             max={Math.min(
                               10000,
                               (10000 * image.width) / image.height,
@@ -950,7 +950,7 @@ function App() {
                           <NumberField
                             label="图片高度"
                             value={image.height}
-                            min={0.1}
+                            min={Math.max(0.1, 0.1 * image.height / image.width)}
                             max={Math.min(
                               10000,
                               (10000 * image.height) / image.width,
@@ -967,7 +967,7 @@ function App() {
                             label="图片缩放"
                             value={(image.width / image.baseWidth) * 100}
                             unit="%"
-                            min={1}
+                            min={Math.max(0.01, 10 / image.baseWidth, 10 * image.width / image.height / image.baseWidth)}
                             max={Math.min(
                               3000,
                               (10000 / image.baseWidth) * 100,

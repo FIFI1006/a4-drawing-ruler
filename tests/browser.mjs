@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { chromium } from "playwright-core";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 mkdirSync("work", { recursive: true });
@@ -173,11 +174,12 @@ try {
   await page.waitForTimeout(800);
   p = await model();
   assert(p.shapes[0].a.x === 10, "单次撤销恢复整次拖动");
-  const before = JSON.stringify(p);
+  await page.getByText("已本地保存", { exact: true }).waitFor();
+  const before = p;
   await page.reload();
   await page.waitForTimeout(1000);
   assert(
-    JSON.stringify(await model()) === before,
+    isDeepStrictEqual(await model(), before),
     "刷新后 IndexedDB 完整恢复项目",
   );
   await download(
