@@ -6,11 +6,13 @@ export function Rulers({
   height,
   scale = 3.78,
   inside = false,
+  colors,
 }: {
   width: number;
   height: number;
   scale?: number;
   inside?: boolean;
+  colors?: { surface: string; ink: string };
 }) {
   const step = scale < 0.75 ? 10 : scale < 2 ? 5 : 1;
   const labelStep = scale < 0.6 ? 100 : scale < 1.2 ? 50 : scale < 2 ? 20 : 10;
@@ -19,7 +21,7 @@ export function Rulers({
   return (
     <g
       className="rulers"
-      fill="#71807d"
+      fill={colors?.ink ?? "#71807d"}
       fontFamily="'SFMono-Regular',Consolas,monospace"
       fontSize={font}
       pointerEvents="none"
@@ -29,14 +31,14 @@ export function Rulers({
         y={inside ? 0 : -thickness}
         width={width}
         height={thickness}
-        fill={inside ? "#ffffffd9" : "#f7f9f8"}
+        fill={inside ? "#ffffffd9" : (colors?.surface ?? "#f7f9f8")}
       />
       <rect
         x={inside ? 0 : -thickness}
         y={0}
         width={thickness}
         height={height}
-        fill={inside ? "#ffffffd9" : "#f7f9f8"}
+        fill={inside ? "#ffffffd9" : (colors?.surface ?? "#f7f9f8")}
       />
       {Array.from(
         { length: Math.floor(width / step) + 1 },
@@ -55,7 +57,7 @@ export function Rulers({
                   ? thickness * 0.25
                   : thickness * 0.13)
             }
-            stroke="#8c9995"
+            stroke={colors?.ink ?? "#8c9995"}
             strokeWidth={inside ? 0.12 : 0.65 / scale}
           />
           {n % labelStep === 0 && n > 0 && (
@@ -85,7 +87,7 @@ export function Rulers({
             }
             y1={n}
             y2={n}
-            stroke="#8c9995"
+            stroke={colors?.ink ?? "#8c9995"}
             strokeWidth={inside ? 0.12 : 0.65 / scale}
           />
           {n % labelStep === 0 && n > 0 && (
@@ -104,13 +106,13 @@ export function Rulers({
             y={-thickness}
             width={thickness}
             height={thickness}
-            fill="#eaf0ed"
+            fill={colors?.surface ?? "#eaf0ed"}
           />
           <text
             x={-thickness / 2}
             y={-thickness / 2 + font / 3}
             textAnchor="middle"
-            fill="#80938c"
+            fill={colors?.ink ?? "#80938c"}
             fontSize={font * 0.8}
           >
             mm
@@ -126,12 +128,20 @@ export function ShapeDrawing({
   selected = false,
   labels = true,
   interactive = false,
+  labelCoordinates = true,
+  labelLeaders = true,
+  labelInk,
+  labelHalo = "white",
 }: {
   shape: Shape;
   scale?: number;
   selected?: boolean;
   labels?: boolean;
   interactive?: boolean;
+  labelCoordinates?: boolean;
+  labelLeaders?: boolean;
+  labelInk?: string;
+  labelHalo?: string;
 }) {
   const textSize = interactive ? 11 / scale : 2.5;
   const lineProps = {
@@ -149,12 +159,14 @@ export function ShapeDrawing({
         : "";
   const a = s.a,
     b = s.b;
+  const offset = s.labelOffset ?? { x: 3, y: -3 };
+  const ink = labelInk ?? s.color;
   return (
     <g
       data-object={s.id}
       opacity={s.visible ? 1 : 0}
       style={{
-        cursor: interactive ? (s.locked ? "default" : "move") : undefined,
+        cursor: interactive ? (s.locked ? "grab" : "move") : undefined,
       }}
     >
       {s.type === "point" ? (
@@ -172,21 +184,37 @@ export function ShapeDrawing({
             stroke={s.color}
             strokeWidth={0.15}
           />
+          {labels && labelLeaders && s.labelOffset && (
+            <line
+              data-label-leader={s.id}
+              x1={a.x}
+              y1={a.y}
+              x2={a.x + offset.x}
+              y2={a.y + offset.y}
+              stroke={ink}
+              strokeWidth={interactive ? 0.8 / scale : 0.15}
+              pointerEvents="none"
+            />
+          )}
           {labels && (
             <text
-              x={a.x + 6 / scale}
-              y={a.y - 6 / scale}
+              data-label={interactive ? s.id : undefined}
+              style={{ cursor: interactive && !s.locked ? "grab" : undefined }}
+              x={a.x + offset.x}
+              y={a.y + offset.y}
               fontSize={textSize}
               fontWeight="600"
-              fill={s.color}
+              fill={ink}
               paintOrder="stroke"
-              stroke="white"
+              stroke={labelHalo}
               strokeWidth={interactive ? 3 / scale : 0.7}
             >
               {s.name}{" "}
-              <tspan fontWeight="400" fontSize={textSize * 0.85}>
-                ({fmt(a.x)}, {fmt(a.y)})
-              </tspan>
+              {labelCoordinates && (
+                <tspan fontWeight="400" fontSize={textSize * 0.85}>
+                  ({fmt(a.x)}, {fmt(a.y)})
+                </tspan>
+              )}
             </text>
           )}
         </>
@@ -229,9 +257,9 @@ export function ShapeDrawing({
           y={(a.y + b.y) / 2 - 5 / scale}
           textAnchor="middle"
           fontSize={textSize}
-          fill={s.color}
+          fill={ink}
           paintOrder="stroke"
-          stroke="white"
+          stroke={labelHalo}
           strokeWidth={interactive ? 4 / scale : 1}
         >
           {label}
@@ -274,6 +302,7 @@ export type DrawOptions = {
   labels: boolean;
   border: boolean;
   rulers: boolean;
+  background?: string;
 };
 export const defaultDrawOptions: DrawOptions = {
   image: true,
@@ -290,6 +319,12 @@ export function Drawing({
   interactive = false,
   options = defaultDrawOptions,
   id = "paper",
+  paperColor,
+  pointLabels = true,
+  labelCoordinates = true,
+  labelLeaders = true,
+  labelInk,
+  labelHalo,
 }: {
   project: Project;
   scale?: number;
@@ -297,44 +332,70 @@ export function Drawing({
   interactive?: boolean;
   options?: DrawOptions;
   id?: string;
+  paperColor?: string;
+  pointLabels?: boolean;
+  labelCoordinates?: boolean;
+  labelLeaders?: boolean;
+  labelInk?: string;
+  labelHalo?: string;
 }) {
   const size = paperSize(p.orientation),
     im = p.image;
   const spacing = p.grid.spacing;
+  const pattern = (major: boolean) => {
+    const step = major ? p.grid.majorSpacing : spacing;
+    const color = major ? p.grid.majorColor : p.grid.color;
+    const px = major ? p.grid.majorStroke : p.grid.stroke;
+    const d = `M${step} 0 H0 V${step}`;
+    return (
+      <pattern
+        id={`${id}-${major ? "major" : "grid"}`}
+        width={step}
+        height={step}
+        patternUnits="userSpaceOnUse"
+      >
+        {p.grid.highContrast && (
+          <>
+            <path
+              d={d}
+              fill="none"
+              stroke="#000000"
+              strokeOpacity={0.8}
+              strokeWidth={(px + 2.5) / scale}
+            />
+            <path
+              d={d}
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth={(px + 1.3) / scale}
+            />
+          </>
+        )}
+        <path
+          data-grid-part={major ? "major" : "minor"}
+          d={d}
+          fill="none"
+          stroke={color}
+          strokeWidth={px / scale}
+        />
+      </pattern>
+    );
+  };
   return (
     <>
       <defs>
         <clipPath id={`${id}-clip`}>
           <rect width={size.width} height={size.height} />
         </clipPath>
-        <pattern
-          id={`${id}-grid`}
-          width={spacing}
-          height={spacing}
-          patternUnits="userSpaceOnUse"
-        >
-          <path
-            d={`M${spacing} 0 H0 V${spacing}`}
-            fill="none"
-            stroke={p.grid.color}
-            strokeWidth={0.15}
-          />
-        </pattern>
-        <pattern
-          id={`${id}-major`}
-          width={spacing * 5}
-          height={spacing * 5}
-          patternUnits="userSpaceOnUse"
-        >
-          <path
-            d={`M${spacing * 5} 0 H0 V${spacing * 5}`}
-            fill="none"
-            stroke={p.grid.color}
-            strokeWidth={0.26}
-          />
-        </pattern>
+        {pattern(false)}
+        {pattern(true)}
       </defs>
-      <rect width={size.width} height={size.height} fill="white" />
+      <rect
+        data-paper-background="true"
+        width={size.width}
+        height={size.height}
+        fill={paperColor ?? options.background ?? "white"}
+      />
       <g clipPath={`url(#${id}-clip)`}>
         {im && im.visible && options.image && (
           <g
@@ -350,27 +411,27 @@ export function Drawing({
               preserveAspectRatio="none"
               opacity={im.opacity}
               style={{
-                cursor: interactive
-                  ? im.locked
-                    ? "default"
-                    : "move"
-                  : undefined,
+                cursor: interactive ? (im.locked ? "grab" : "move") : undefined,
               }}
             />
           </g>
         )}
         {p.grid.enabled && options.grid && (
-          <g opacity={p.grid.opacity} pointerEvents="none">
+          <g data-layer="grid" pointerEvents="none">
             <rect
               width={size.width}
               height={size.height}
               fill={`url(#${id}-grid)`}
+              opacity={p.grid.opacity}
             />
-            <rect
-              width={size.width}
-              height={size.height}
-              fill={`url(#${id}-major)`}
-            />
+            {p.grid.majorEnabled && (
+              <rect
+                width={size.width}
+                height={size.height}
+                fill={`url(#${id}-major)`}
+                opacity={p.grid.majorOpacity}
+              />
+            )}
           </g>
         )}
         {options.guides &&
@@ -380,14 +441,27 @@ export function Drawing({
                 s.visible &&
                 (s.type === "point" ? p.layers.points : p.layers.guides),
             )
+            .sort((a, b) => {
+              const level = (s: Shape) =>
+                interactive && s.id === selection
+                  ? 2
+                  : s.type === "point"
+                    ? 1
+                    : 0;
+              return level(a) - level(b);
+            })
             .map((s) => (
               <ShapeDrawing
                 key={s.id}
                 shape={s}
                 scale={scale}
                 selected={interactive && selection === s.id}
-                labels={options.labels}
+                labels={options.labels && (s.type !== "point" || pointLabels)}
                 interactive={interactive}
+                labelCoordinates={labelCoordinates}
+                labelLeaders={labelLeaders}
+                labelInk={labelInk}
+                labelHalo={labelHalo}
               />
             ))}
         {options.rulers && <Rulers {...size} inside />}
@@ -436,17 +510,33 @@ export function Drawing({
     </>
   );
 }
-export function Crosshair({ point: p, scale }: { point: Vec; scale: number }) {
+export function Crosshair({
+  point: p,
+  scale,
+  full = false,
+  width = 210,
+  height = 297,
+}: {
+  point: Vec;
+  scale: number;
+  full?: boolean;
+  width?: number;
+  height?: number;
+}) {
+  const d = full
+    ? `M0 ${p.y}H${width}M${p.x} 0V${height}`
+    : `M${p.x - 10 / scale} ${p.y}h${20 / scale}M${p.x} ${p.y - 10 / scale}v${20 / scale}`;
   return (
-    <g
-      pointerEvents="none"
-      stroke="#2c8c76"
-      strokeWidth={0.8 / scale}
-      opacity={0.7}
-    >
+    <g data-crosshair={full ? "full" : "local"} pointerEvents="none">
       <path
-        d={`M${p.x - 8 / scale} ${p.y}h${16 / scale}M${p.x} ${p.y - 8 / scale}v${16 / scale}`}
+        d={d}
+        stroke="#000"
+        strokeOpacity={0.65}
+        strokeWidth={3 / scale}
+        fill="none"
       />
+      <path d={d} stroke="#fff" strokeWidth={1.8 / scale} fill="none" />
+      <path d={d} stroke="#00bfa5" strokeWidth={0.8 / scale} fill="none" />
     </g>
   );
 }

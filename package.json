@@ -1,16 +1,17 @@
 {
   "name": "a4-drawing-ruler",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/package-source.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
     "test:browser": "node tests/browser.mjs",
     "test:offline": "node tests/offline.mjs",
-    "test:gestures": "node tests/gestures.mjs"
+    "test:gestures": "node tests/gestures.mjs",
+    "test:v2": "node tests/v2.mjs"
   },
   "dependencies": {
     "idb": "^8.0.0",

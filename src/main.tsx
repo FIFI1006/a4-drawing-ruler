@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { registerSW } from "virtual:pwa-register";
 import App from "./App";
 import "./style.css";
+import "./theme.css";
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { error: boolean }

@@ -7,7 +7,14 @@ import {
 } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { ImagePlus, ArrowUpRight, MousePointer2 } from "lucide-react";
-import { Drawing, Rulers, ShapeDrawing, Crosshair } from "./Drawing";
+import {
+  Drawing,
+  Rulers,
+  ShapeDrawing,
+  Crosshair,
+  defaultDrawOptions,
+} from "./Drawing";
+import { themes, darkColor, type Preferences } from "./preferences";
 import {
   clamp,
   distance,
@@ -29,7 +36,7 @@ export type WorkspaceHandle = {
 };
 type View = { x: number; y: number; scale: number };
 type Drag = {
-  type: "pan" | "image" | "corner" | "shape" | "endpoint";
+  type: "pan" | "image" | "corner" | "shape" | "endpoint" | "label";
   start: Vec;
   view: View;
   before: Project;
@@ -51,6 +58,8 @@ type Props = {
   cancelToken: number;
   calibration: number;
   onShape: () => void;
+  preferences: Preferences;
+  onPreferences: (p: Partial<Preferences>) => void;
 };
 export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
   {
@@ -68,6 +77,8 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
     cancelToken,
     calibration,
     onShape,
+    preferences,
+    onPreferences,
   },
   ref,
 ) {
@@ -86,18 +97,41 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
   const touchTap = useRef<{ id: number; start: Vec; mm: Vec } | null>(null);
   const pinch = useRef<{ distance: number; mid: Vec; view: View } | null>(null);
   const fitting = useRef(true);
+  const [panning, setPanning] = useState(false);
+  const [hostSize, setHostSize] = useState({ width: 800, height: 600 });
+  const theme = themes[preferences.theme];
+  const paperDark = darkColor(preferences.paperColor);
+  function cancelInteraction() {
+    const d = drag.current;
+    if (d && d.type !== "pan") update(() => d.before, false);
+    drag.current = null;
+    touchTap.current = null;
+    pinch.current = null;
+    touches.current.clear();
+    setPanning(false);
+    setCursor(null);
+    onCursor(null);
+  }
+  useEffect(() => {
+    window.addEventListener("blur", cancelInteraction);
+    return () => window.removeEventListener("blur", cancelInteraction);
+  }, [update]);
+
   const fit = () => {
     if (!host.current) return;
     const { clientWidth: w, clientHeight: h } = host.current;
     const z = paperSize(pr.current.orientation);
     const scale = Math.max(
       0.3,
-      Math.min((w - 110) / z.width, (h - 110) / z.height),
+      Math.min(
+        (w - (w < 600 ? 54 : 68)) / z.width,
+        (h - (h < 480 ? 60 : 78)) / z.height,
+      ),
     );
     fitting.current = true;
     setView({
-      x: (w - z.width * scale) / 2 + 10,
-      y: (h - z.height * scale) / 2 + 12,
+      x: (w - z.width * scale) / 2 + 8,
+      y: (h - z.height * scale) / 2 + 7,
       scale,
     });
   };
@@ -132,6 +166,11 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
   useEffect(() => {
     fit();
     const observer = new ResizeObserver(() => {
+      if (host.current)
+        setHostSize({
+          width: host.current.clientWidth,
+          height: host.current.clientHeight,
+        });
       if (fitting.current) fit();
     });
     if (host.current) observer.observe(host.current);
@@ -146,11 +185,13 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
   useEffect(() => {
     setPending(null);
     touchTap.current = null;
-    if (drag.current) {
+    setPanning(false);
+    if (drag.current && drag.current.type !== "pan") {
       const before = drag.current.before;
       update(() => before, false);
       drag.current = null;
     }
+    drag.current = null;
   }, [tool, cancelToken]);
   useEffect(() => {
     const el = host.current;
@@ -181,7 +222,9 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
     e.currentTarget.setPointerCapture(e.pointerId);
     if (touches.current.size === 2) {
       touchTap.current = null;
-      if (drag.current) update(() => drag.current!.before, false);
+      if (drag.current && drag.current.type !== "pan")
+        update(() => drag.current!.before, false);
+      setPanning(true);
       drag.current = null;
       const [a, b] = [...touches.current.values()];
       pinch.current = {
@@ -199,9 +242,14 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
     const shapeId = target
       .closest("[data-object]")
       ?.getAttribute("data-object");
+    const labelId = target.closest("[data-label]")?.getAttribute("data-label");
     const ep = target.getAttribute("data-endpoint"),
       corner = target.getAttribute("data-corner");
     const begin = (type: Drag["type"], id?: string, index?: number) => {
+      if (type === "pan") {
+        fitting.current = false;
+        setPanning(true);
+      }
       drag.current = {
         type,
         start: p,
@@ -216,6 +264,20 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
       begin("pan");
       return;
     }
+    // Resize handles may lie beyond the paper: keep them ahead of blank-space panning.
+    if (
+      tool === "select" &&
+      corner !== null &&
+      project.image &&
+      !project.image.locked
+    ) {
+      begin("corner", "image", Number(corner));
+      return;
+    }
+    if (!inside) {
+      begin("pan");
+      return;
+    }
     if (tool === "select") {
       if (corner !== null && project.image && !project.image.locked) {
         begin("corner", "image", Number(corner));
@@ -224,9 +286,13 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
       if (shapeId) {
         setSelection(shapeId);
         const s = project.shapes.find((s) => s.id === shapeId);
+        if (s?.locked) {
+          begin("pan");
+          return;
+        }
         if (s && !s.locked)
           begin(
-            ep !== null ? "endpoint" : "shape",
+            labelId ? "label" : ep !== null ? "endpoint" : "shape",
             shapeId,
             ep !== null ? Number(ep) : undefined,
           );
@@ -234,10 +300,11 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
       }
       if (target.hasAttribute("data-image") && inside && project.image) {
         setSelection("image");
-        if (!project.image.locked) begin("image");
+        begin(project.image.locked ? "pan" : "image");
         return;
       }
       setSelection(null);
+      begin("pan");
       return;
     }
     if (!inside) return;
@@ -373,6 +440,27 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
     }
     const original = d.before.shapes.find((s) => s.id === d.id);
     if (!original) return;
+    if (d.type === "label") {
+      const offset = original.labelOffset ?? { x: 3, y: -3 };
+      update(
+        (q) => ({
+          ...q,
+          shapes: q.shapes.map((s) =>
+            s.id === d.id
+              ? {
+                  ...s,
+                  labelOffset: {
+                    x: clamp(offset.x + delta.x, -1000, 1000),
+                    y: clamp(offset.y + delta.y, -1000, 1000),
+                  },
+                }
+              : s,
+          ),
+        }),
+        false,
+      );
+      return;
+    }
     let a = original.a,
       b = original.b;
     if (d.type === "endpoint") {
@@ -402,6 +490,7 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
     );
   }
   function up(e: ReactPointerEvent<SVGSVGElement>) {
+    setPanning(false);
     if (touchTap.current?.id === e.pointerId) {
       const tap = touchTap.current;
       touchTap.current = null;
@@ -429,7 +518,8 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
   return (
     <div
       ref={host}
-      className={`workspace tool-${tool} ${space ? "space-pan" : ""}`}
+      className={`workspace tool-${tool} ${space ? "space-pan" : ""} ${panning ? "is-panning" : ""}`}
+      style={{ backgroundColor: preferences.workspaceColor }}
     >
       <svg
         ref={svg}
@@ -437,15 +527,9 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
         onPointerDown={down}
         onPointerMove={move}
         onPointerUp={up}
-        onPointerCancel={(e) => {
-          touchTap.current = null;
-          if (drag.current) {
-            const before = drag.current.before;
-            update(() => before, false);
-          }
-          drag.current = null;
-          touches.current.delete(e.pointerId);
-          pinch.current = null;
+        onPointerCancel={cancelInteraction}
+        onLostPointerCapture={(e) => {
+          if (touches.current.has(e.pointerId)) cancelInteraction();
         }}
         onPointerLeave={() => {
           setCursor(null);
@@ -457,7 +541,7 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
           <rect
             width={size.width}
             height={size.height}
-            fill="white"
+            fill={preferences.paperColor}
             className="paper-shadow"
           />
           <Drawing
@@ -465,18 +549,112 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
             scale={view.scale}
             selection={selection}
             interactive
+            paperColor={preferences.paperColor}
+            pointLabels={preferences.labelsVisible}
+            labelCoordinates={preferences.labelCoordinates}
+            labelLeaders={preferences.labelLeaders}
+            labelInk={paperDark ? "#edfff8" : undefined}
+            labelHalo={preferences.paperColor}
           />
-          <Rulers {...size} scale={view.scale} />
+          <Rulers
+            {...size}
+            scale={view.scale}
+            colors={{ surface: theme.ruler, ink: theme.rulerInk }}
+          />
           {preview && (
             <g opacity={0.7} pointerEvents="none">
               <ShapeDrawing shape={preview} scale={view.scale} interactive />
             </g>
           )}
-          {cursor && tool !== "select" && tool !== "pan" && (
-            <Crosshair point={cursor} scale={view.scale} />
+          {cursor && !panning && tool !== "select" && tool !== "pan" && (
+            <Crosshair
+              point={cursor}
+              scale={view.scale}
+              full={tool === "point" && preferences.fullCrosshair}
+              {...size}
+            />
           )}
         </g>
       </svg>
+      {tool === "point" && (
+        <div className="loupe-toolbar">
+          <button
+            className={preferences.magnifierEnabled ? "active" : ""}
+            aria-label="切换定位放大镜"
+            aria-pressed={preferences.magnifierEnabled}
+            onClick={() =>
+              onPreferences({ magnifierEnabled: !preferences.magnifierEnabled })
+            }
+          >
+            放大镜
+          </button>
+          {([2, 4, 8] as const).map((n) => (
+            <button
+              key={n}
+              className={preferences.magnifierZoom === n ? "active" : ""}
+              aria-label={`放大镜 ${n} 倍`}
+              onClick={() => onPreferences({ magnifierZoom: n })}
+            >
+              {n}×
+            </button>
+          ))}
+        </div>
+      )}
+      {tool === "point" &&
+        preferences.magnifierEnabled &&
+        cursor &&
+        !panning &&
+        (() => {
+          const diameter = Math.min(164, Math.max(100, hostSize.width * 0.4)),
+            region = diameter / (view.scale * preferences.magnifierZoom);
+          const x = view.x + cursor.x * view.scale,
+            y = view.y + cursor.y * view.scale;
+          const left =
+            x + 24 + diameter < hostSize.width
+              ? x + 24
+              : Math.max(5, x - diameter - 24);
+          const top = clamp(
+            y - diameter - 24,
+            40,
+            Math.max(40, hostSize.height - diameter - 60),
+          );
+          return (
+            <div
+              className="coordinate-loupe"
+              aria-label="局部放大视图"
+              style={{ left, top, width: diameter }}
+            >
+              <header>
+                <span>{preferences.magnifierZoom}×</span>
+                <code>
+                  {fmt(cursor.x)}, {fmt(cursor.y)} mm
+                </code>
+              </header>
+              <svg
+                width={diameter}
+                height={diameter}
+                viewBox={`${cursor.x - region / 2} ${cursor.y - region / 2} ${region} ${region}`}
+                style={{ background: preferences.paperColor }}
+              >
+                <Drawing
+                  project={project}
+                  id="loupe"
+                  scale={view.scale * preferences.magnifierZoom}
+                  paperColor={preferences.paperColor}
+                  options={{
+                    ...defaultDrawOptions,
+                    labels: false,
+                    border: false,
+                  }}
+                />
+                <Crosshair
+                  point={cursor}
+                  scale={view.scale * preferences.magnifierZoom}
+                />
+              </svg>
+            </div>
+          );
+        })()}
       {!project.image && project.shapes.length === 0 && (
         <div
           className="paper-empty"
@@ -509,7 +687,7 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(function Workspace(
       {!pending && (
         <div className="canvas-guide">
           <MousePointer2 size={12} />
-          滚轮缩放 <span>·</span> 按住空格拖动画纸
+          空白处左键拖动画纸 <span>·</span> 滚轮缩放
         </div>
       )}
     </div>

@@ -77,6 +77,10 @@ import {
 import { exportCsv, exportPdf, exportPng } from "./export";
 import { defaultDrawOptions, type DrawOptions } from "./Drawing";
 import { demoImage } from "./demo";
+import { usePreferences, projectWithDefaults } from "./preferences";
+import { PreferenceSettings } from "./PreferenceSettings";
+import { GridSettings } from "./GridSettings";
+import type { Grid } from "./model";
 
 const tools: {
   id: Tool;
@@ -94,7 +98,7 @@ const tools: {
   { id: "pan", label: "平移画纸", key: "Space", icon: Hand },
 ];
 const toolDescriptions: Record<Tool, string> = {
-  select: "点击选中 · 拖动移动图片或对象",
+  select: "空白处拖动画纸 · 拖动图片只移动图片",
   point: "点击画纸，添加一个毫米坐标标记",
   measure: "依次点击起点和终点，测量真实画纸距离",
   line: "依次点击两个位置，创建精确线段",
@@ -104,6 +108,7 @@ const toolDescriptions: Record<Tool, string> = {
   pan: "拖动画纸 · 双指可缩放和平移",
 };
 function App() {
+  const { preferences, patchPreferences, storageError } = usePreferences();
   const state = useProject();
   const { project, update, replace, undo, redo, canUndo, canRedo } = state;
   const [loaded, setLoaded] = useState(false),
@@ -137,6 +142,7 @@ function App() {
     [exportKind, setExportKind] = useState("pdf"),
     [dpi, setDpi] = useState(300),
     [exportMode, setExportMode] = useState("all"),
+    [exportPreviewBackground, setExportPreviewBackground] = useState(false),
     [exportOptions, setExportOptions] =
       useState<DrawOptions>(defaultDrawOptions);
   const workspace = useRef<WorkspaceHandle>(null),
@@ -157,7 +163,7 @@ function App() {
     loadLocal()
       .then((p) => {
         if (live) {
-          if (p) replace(p);
+          replace(p ?? projectWithDefaults(preferences.grid));
           setLoaded(true);
           setSaveStatus(p ? "已本地保存" : "本地自动保存");
         }
@@ -202,6 +208,15 @@ function App() {
       window.removeEventListener("offline", change);
     };
   }, []);
+  const patchGrid = (patch: Partial<Grid>) => {
+    const grid = { ...state.ref.current.grid, ...patch };
+    update((p) => ({ ...p, grid }));
+    patchPreferences({ grid });
+  };
+  useEffect(() => {
+    if (storageError)
+      notify("用户偏好无法保存到本地，请检查浏览器存储权限。", true);
+  }, [storageError]);
   const patchImage = (patch: Partial<RefImage>) =>
     update((p) => ({ ...p, image: p.image ? { ...p.image, ...patch } : null }));
   const patchShape = (patch: Partial<Shape>) =>
@@ -414,6 +429,9 @@ function App() {
         image: exportMode !== "guides",
         grid: ["all", "grid"].includes(exportMode),
         guides: ["all", "guides", "lines"].includes(exportMode),
+        background: exportPreviewBackground
+          ? preferences.paperColor
+          : "#ffffff",
       };
       if (exportKind === "csv") exportCsv(project);
       else if (exportKind === "png") await exportPng(project, opts, dpi);
@@ -466,7 +484,8 @@ function App() {
   };
   return (
     <div
-      className="app"
+      className={`app theme-${preferences.theme}`}
+      data-theme={preferences.theme}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes("Files")) {
           e.preventDefault();
@@ -617,6 +636,43 @@ function App() {
           <Maximize size={15} />
           <span>适应窗口</span>
         </button>
+        <button
+          className="button quiet view-action"
+          title="画纸居中"
+          aria-label="画纸居中"
+          onClick={() => workspace.current?.center()}
+        >
+          <Target size={15} />
+          <span>居中</span>
+        </button>
+        <button
+          className="button quiet view-action"
+          title="恢复默认视图缩放 100%"
+          aria-label="恢复默认工作区缩放"
+          onClick={() => workspace.current?.setZoom(100)}
+        >
+          <RotateCcw size={15} />
+          <span>100%</span>
+        </button>
+        {image && (
+          <button
+            className={`button quiet image-lock-button ${image.locked ? "active" : ""}`}
+            aria-label={image.locked ? "解锁参考图片" : "锁定参考图片"}
+            title={
+              image.locked
+                ? "图片已锁定，可直接拖动画纸"
+                : "锁定图片，防止误移动"
+            }
+            onClick={() => patchImage({ locked: !image.locked })}
+          >
+            {image.locked ? (
+              <LockKeyhole size={15} />
+            ) : (
+              <UnlockKeyhole size={15} />
+            )}
+            <span>{image.locked ? "图片已锁定" : "锁定图片"}</span>
+          </button>
+        )}
         <div className="toolbar-right">
           <span className="local-badge">
             <span />
@@ -689,6 +745,8 @@ function App() {
           </div>
           <Workspace
             ref={workspace}
+            preferences={preferences}
+            onPreferences={patchPreferences}
             project={project}
             tool={tool}
             selection={selection}
@@ -720,6 +778,14 @@ function App() {
           <div className="zoom-dock">
             {zoomMenu && (
               <div className="zoom-menu">
+                <NumberField
+                  label="工作区缩放百分比"
+                  value={zoom}
+                  min={(0.3 / ((96 / 25.4) * calibration)) * 100}
+                  max={(35 / ((96 / 25.4) * calibration)) * 100}
+                  unit="%"
+                  onChange={(v) => workspace.current?.setZoom(v)}
+                />
                 {[25, 50, 75, 100, 150, 200].map((v) => (
                   <button
                     key={v}
@@ -732,6 +798,14 @@ function App() {
                   </button>
                 ))}
                 <hr />
+                <button
+                  onClick={() => {
+                    workspace.current?.setZoom(100);
+                    setZoomMenu(false);
+                  }}
+                >
+                  默认缩放 100%
+                </button>
                 <button
                   onClick={() => {
                     workspace.current?.fit();
@@ -764,7 +838,7 @@ function App() {
               aria-expanded={zoomMenu}
               onClick={() => setZoomMenu(!zoomMenu)}
             >
-              {Math.round(zoom)}%<ChevronDown size={11} />
+              {Number(zoom.toFixed(1))}%<ChevronDown size={11} />
             </button>
             <button
               className="icon-button"
@@ -934,7 +1008,10 @@ function App() {
                           <NumberField
                             label="图片宽度"
                             value={image.width}
-                            min={Math.max(0.1, 0.1 * image.width / image.height)}
+                            min={Math.max(
+                              0.1,
+                              (0.1 * image.width) / image.height,
+                            )}
                             max={Math.min(
                               10000,
                               (10000 * image.width) / image.height,
@@ -950,7 +1027,10 @@ function App() {
                           <NumberField
                             label="图片高度"
                             value={image.height}
-                            min={Math.max(0.1, 0.1 * image.height / image.width)}
+                            min={Math.max(
+                              0.1,
+                              (0.1 * image.height) / image.width,
+                            )}
                             max={Math.min(
                               10000,
                               (10000 * image.height) / image.width,
@@ -967,7 +1047,13 @@ function App() {
                             label="图片缩放"
                             value={(image.width / image.baseWidth) * 100}
                             unit="%"
-                            min={Math.max(0.01, 10 / image.baseWidth, 10 * image.width / image.height / image.baseWidth)}
+                            min={Math.max(
+                              0.01,
+                              10 / image.baseWidth,
+                              (10 * image.width) /
+                                image.height /
+                                image.baseWidth,
+                            )}
                             max={Math.min(
                               3000,
                               (10000 / image.baseWidth) * 100,
@@ -1070,108 +1156,7 @@ function App() {
                       </>
                     )}
                   </section>
-                  <section className="panel-section">
-                    <div className="section-heading">
-                      <h3>
-                        <Grid2X2 size={15} />
-                        毫米网格
-                      </h3>
-                      <Toggle
-                        checked={project.grid.enabled}
-                        onChange={() =>
-                          update((p) => ({
-                            ...p,
-                            grid: { ...p.grid, enabled: !p.grid.enabled },
-                          }))
-                        }
-                        label="显示网格"
-                      />
-                    </div>
-                    <label className="field-caption">
-                      网格间距 <span>mm</span>
-                    </label>
-                    <div className="spacing-options">
-                      {[1, 5, 10, 20].map((v) => (
-                        <button
-                          key={v}
-                          className={project.grid.spacing === v ? "active" : ""}
-                          onClick={() =>
-                            update((p) => ({
-                              ...p,
-                              grid: { ...p.grid, spacing: v },
-                            }))
-                          }
-                        >
-                          {v}
-                        </button>
-                      ))}
-                      <span className="custom-spacing">
-                        <input
-                          type="number"
-                          aria-label="自定义网格间距"
-                          min={1}
-                          max={100}
-                          placeholder="自定义"
-                          value={
-                            [1, 5, 10, 20].includes(project.grid.spacing)
-                              ? ""
-                              : project.grid.spacing
-                          }
-                          onChange={(e) => {
-                            const v = Number(e.target.value);
-                            if (Number.isFinite(v) && v >= 1 && v <= 100)
-                              update((p) => ({
-                                ...p,
-                                grid: { ...p.grid, spacing: v },
-                              }));
-                          }}
-                        />
-                      </span>
-                    </div>
-                    <div className="grid-style">
-                      <label>
-                        网格颜色
-                        <input
-                          aria-label="网格颜色"
-                          type="color"
-                          value={project.grid.color}
-                          onChange={(e) =>
-                            update((p) => ({
-                              ...p,
-                              grid: { ...p.grid, color: e.target.value },
-                            }))
-                          }
-                        />
-                        <code>{project.grid.color.toUpperCase()}</code>
-                      </label>
-                    </div>
-                    <Range
-                      label="网格透明度"
-                      value={project.grid.opacity * 100}
-                      onChange={(v) =>
-                        update((p) => ({
-                          ...p,
-                          grid: { ...p.grid, opacity: v / 100 },
-                        }))
-                      }
-                    />
-                    <div className="switch-row">
-                      <div>
-                        <span>吸附网格</span>
-                        <small>拖动与定位时对齐网格交点</small>
-                      </div>
-                      <Toggle
-                        label="吸附网格"
-                        checked={project.grid.snap}
-                        onChange={() =>
-                          update((p) => ({
-                            ...p,
-                            grid: { ...p.grid, snap: !p.grid.snap },
-                          }))
-                        }
-                      />
-                    </div>
-                  </section>
+                  <GridSettings grid={project.grid} onChange={patchGrid} />
                   <section className="panel-section">
                     <div className="section-heading">
                       <h3>
@@ -1357,6 +1342,52 @@ function App() {
                           </>
                         )}
                       </div>
+                      {selected.type === "point" && (
+                        <div className="label-offset-fields">
+                          <h4>标签位置（独立于标记点）</h4>
+                          <div className="field-grid">
+                            <NumberField
+                              label="标签水平偏移"
+                              value={selected.labelOffset?.x ?? 3}
+                              min={-1000}
+                              max={1000}
+                              disabled={selected.locked}
+                              onChange={(x) =>
+                                patchShape({
+                                  labelOffset: {
+                                    x,
+                                    y: selected.labelOffset?.y ?? -3,
+                                  },
+                                })
+                              }
+                            />
+                            <NumberField
+                              label="标签垂直偏移"
+                              value={selected.labelOffset?.y ?? -3}
+                              min={-1000}
+                              max={1000}
+                              disabled={selected.locked}
+                              onChange={(y) =>
+                                patchShape({
+                                  labelOffset: {
+                                    x: selected.labelOffset?.x ?? 3,
+                                    y,
+                                  },
+                                })
+                              }
+                            />
+                          </div>
+                          <button
+                            className="text-button"
+                            disabled={selected.locked}
+                            onClick={() =>
+                              patchShape({ labelOffset: undefined })
+                            }
+                          >
+                            恢复默认标签位置
+                          </button>
+                        </div>
+                      )}
                       {selected.type !== "point" && (
                         <div className="measurement-card">
                           {selected.type === "rect" ? (
@@ -1567,11 +1598,7 @@ function App() {
                     "毫米网格",
                     Grid2X2,
                     project.grid.enabled,
-                    () =>
-                      update((p) => ({
-                        ...p,
-                        grid: { ...p.grid, enabled: !p.grid.enabled },
-                      })),
+                    () => patchGrid({ enabled: !project.grid.enabled }),
                     undefined,
                     undefined,
                     `${project.grid.spacing} mm 间距`,
@@ -1633,15 +1660,13 @@ function App() {
         <div className="status-center">
           <span className="status-dot" />
           {tool === "select" ? "就绪" : currentTool.label}
-          <span className="status-zoom">工作区 {Math.round(zoom)}%</span>
+          <span className="status-zoom">工作区 {Number(zoom.toFixed(1))}%</span>
         </div>
         <div className="status-right">
           <span>A4 {project.orientation === "portrait" ? "纵向" : "横向"}</span>
           <span className="status-divider" />
           <button
-            onClick={() =>
-              update((p) => ({ ...p, grid: { ...p.grid, snap: !p.grid.snap } }))
-            }
+            onClick={() => patchGrid({ snap: !project.grid.snap })}
             className={project.grid.snap ? "snap-active" : ""}
           >
             <Grid2X2 size={12} />
@@ -1755,6 +1780,16 @@ function App() {
                   </select>
                 </label>
                 <div className="export-checkboxes">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={exportPreviewBackground}
+                      onChange={(e) =>
+                        setExportPreviewBackground(e.target.checked)
+                      }
+                    />
+                    明确使用当前画纸预览底色（默认白色）
+                  </label>
                   {[
                     { key: "labels", name: "包含坐标标签" },
                     { key: "rulers", name: "包含毫米标尺（画纸内侧）" },
@@ -1763,7 +1798,7 @@ function App() {
                     <label key={o.key}>
                       <input
                         type="checkbox"
-                        checked={exportOptions[o.key as keyof DrawOptions]}
+                        checked={!!exportOptions[o.key as keyof DrawOptions]}
                         onChange={(e) =>
                           setExportOptions((p) => ({
                             ...p,
@@ -1810,10 +1845,14 @@ function App() {
       {modal === "settings" && (
         <Modal
           title="工作台设置"
-          subtitle="校准屏幕显示，不改变画纸和导出尺寸。"
+          subtitle="主题、定位辅助与屏幕校准；偏好自动保存在本机。"
           onClose={() => setModal(null)}
         >
           <div className="modal-content">
+            <PreferenceSettings
+              preferences={preferences}
+              onChange={patchPreferences}
+            />
             <h3 className="modal-section-title">
               <Monitor size={17} />
               屏幕实物标尺校准
@@ -1943,7 +1982,7 @@ function App() {
                 ["L", "直线"],
                 ["R", "矩形"],
                 ["H / J", "水平 / 垂直辅助线"],
-                ["Space + 拖动", "平移工作区"],
+                ["空白处拖动 / Space", "平移工作区"],
                 ["滚轮 / 双指", "缩放工作区"],
                 ["Ctrl+Z / Ctrl+Y", "撤销 / 重做"],
                 ["Delete / Esc", "删除 / 取消"],
@@ -1984,7 +2023,7 @@ function App() {
             <button
               className="button primary"
               onClick={() => {
-                replace(newProject());
+                replace(projectWithDefaults(preferences.grid));
                 setSelection(null);
                 setTool("select");
                 setCancelToken((n) => n + 1);

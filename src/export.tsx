@@ -40,7 +40,7 @@ export async function exportCanvas(
         reject(new Error("图片渲染失败，请重新导入参考图片后重试。"));
       image.src = url;
     });
-    ctx.fillStyle = "white";
+    ctx.fillStyle = options.background ?? "white";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
     return canvas;

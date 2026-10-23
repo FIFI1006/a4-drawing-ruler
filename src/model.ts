@@ -23,6 +23,8 @@ export const shapeSchema = z.object({
   dashed: z.boolean(),
   visible: z.boolean(),
   locked: z.boolean(),
+  // Display-only displacement from the point; never part of its geometry.
+  labelOffset: coord.optional(),
 });
 export type Shape = z.infer<typeof shapeSchema>;
 export const imageSchema = z.object({
@@ -46,18 +48,39 @@ export const imageSchema = z.object({
   locked: z.boolean(),
 });
 export type RefImage = z.infer<typeof imageSchema>;
+const color = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+export const gridSchema = z
+  .object({
+    enabled: z.boolean(),
+    spacing: z.number().finite().min(1).max(100),
+    color,
+    opacity: z.number().finite().min(0).max(1),
+    snap: z.boolean(),
+    stroke: z.number().finite().min(0.5).max(6).optional(),
+    majorEnabled: z.boolean().optional(),
+    majorSpacing: z.number().finite().min(1).max(500).optional(),
+    majorColor: color.optional(),
+    majorOpacity: z.number().finite().min(0).max(1).optional(),
+    majorStroke: z.number().finite().min(0.5).max(6).optional(),
+    highContrast: z.boolean().optional(),
+  })
+  .transform((g) => ({
+    ...g,
+    stroke: g.stroke ?? 1,
+    majorEnabled: g.majorEnabled ?? true,
+    majorSpacing: g.majorSpacing ?? g.spacing * 5,
+    majorColor: g.majorColor ?? g.color,
+    majorOpacity: g.majorOpacity ?? g.opacity,
+    majorStroke: g.majorStroke ?? 1.8,
+    highContrast: g.highContrast ?? false,
+  }));
+export type Grid = z.infer<typeof gridSchema>;
 export const projectSchema = z.object({
   version: z.literal(1),
   name: z.string().min(1).max(120),
   orientation: z.enum(["portrait", "landscape"]),
   image: imageSchema.nullable(),
-  grid: z.object({
-    enabled: z.boolean(),
-    spacing: z.number().finite().min(1).max(100),
-    color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-    opacity: z.number().finite().min(0).max(1),
-    snap: z.boolean(),
-  }),
+  grid: gridSchema,
   shapes: z.array(shapeSchema).max(10000),
   layers: z.object({ guides: z.boolean(), points: z.boolean() }),
 });
@@ -70,9 +93,16 @@ export const newProject = (): Project => ({
   grid: {
     enabled: true,
     spacing: 10,
-    color: "#668e87",
-    opacity: 0.22,
+    color: "#00bcd4",
+    opacity: 0.65,
     snap: false,
+    stroke: 1,
+    majorEnabled: true,
+    majorSpacing: 20,
+    majorColor: "#00bcd4",
+    majorOpacity: 0.85,
+    majorStroke: 1.8,
+    highContrast: false,
   },
   shapes: [],
   layers: { guides: true, points: true },
